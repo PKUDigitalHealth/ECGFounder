@@ -14,19 +14,19 @@ from torch.utils.data import DataLoader
 import json
 from net1d import Net1D
 from util import save_checkpoint, my_eval, my_eval_with_dynamic_thresh, my_eval_with_dynamic_thresh_and_roc
-from finetune_model import ft_ECGFounder, ft_ramdom, ft_simCLR
+from finetune_model import ft_1lead_ECGFounder, ft_1lead_ramdom, ft_1lead_ssl
 from sklearn.model_selection import train_test_split
 import torch.nn as nn
 from net1d import Net1D
 from torch.utils.data import Dataset, DataLoader
-from dataset import LVEF_Dataset, CHD_Dataset, CKD_Dataset, age_Dataset, age_reg_Dataset, sex_Dataset, lab_Dataset, LVEF_reg_Dataset
+from dataset import LVEF_1lead_Dataset, CHD_1lead_Dataset, CKD_1lead_Dataset, age_1lead_Dataset, age_reg_1lead_Dataset, sex_1lead_Dataset, lab_1lead_Dataset, LVEF_reg_1lead_Dataset
 
 # Load the dataset
 
 datasets = [ 'lab', 'age', 'sex', 'CHD', 'CKD', 'LVEF']
-Models = ['random', 'ssl', 'ECGFounder']
+Models = ['ssl', 'random', 'ECGFounder']
 
-gpu_id = 0
+gpu_id = 2
 
 ### no need to change
 batch_size = 512
@@ -44,22 +44,22 @@ uddd_df = pd.read_csv('/hot_data/lijun/code/partners_ecg-master/d_icd_diagnoses.
 for run_id in datasets:
   for Model in Models:
     if run_id == 'LVEF':
-        CustomDataset = LVEF_Dataset
+        CustomDataset = LVEF_1lead_Dataset
         df_label_path = '/home/lijun/code/LVEF.csv'
     elif run_id == 'lab':
-        CustomDataset = lab_Dataset
+        CustomDataset = lab_1lead_Dataset
         df_label_path = '/data1/1shared/lijun/ecg/anyECG/data/lab_item/50963_NTproBNP_N末端脑钠肽前体.csv'
     elif run_id == 'age':
-        CustomDataset = age_Dataset
+        CustomDataset = age_1lead_Dataset
         df_label_path = '/hot_data/lijun/code/partners_ecg-master/MIMIC/ICD_csv/age_gender_ICD_I.csv'
     elif run_id == 'sex':
-        CustomDataset = sex_Dataset
+        CustomDataset = sex_1lead_Dataset
         df_label_path = '/hot_data/lijun/code/partners_ecg-master/MIMIC/ICD_csv/age_gender_ICD_I.csv'
     elif run_id == 'CHD':
-        CustomDataset = CHD_Dataset
+        CustomDataset = CHD_1lead_Dataset
         df_label_path = '/hot_data/lijun/code/partners_ecg-master/MIMIC/ICD_csv/CHD.csv'
     elif run_id == 'CKD':
-        CustomDataset = CKD_Dataset
+        CustomDataset = CKD_1lead_Dataset
         df_label_path = '/hot_data/lijun/code/partners_ecg-master/MIMIC/ICD_csv/age_ICD_N18.csv'
 
 
@@ -68,15 +68,15 @@ for run_id in datasets:
     # Splitting the dataset into train, validation, and test sets
 
     train_df, test_df = train_test_split(df_label, test_size=0.2, shuffle=False)
-    #val_df, test_df = train_test_split(test_df, test_size=0.5, shuffle=False)
+    val_df, test_df = train_test_split(test_df, test_size=0.5, shuffle=False)
 
     train_dataset = CustomDataset(labels_df=train_df)
-    #val_dataset = CustomDataset(labels_df=val_df)
+    val_dataset = CustomDataset(labels_df=val_df)
     test_dataset = CustomDataset(labels_df=test_df)
 
     # Example DataLoader usage
     trainloader = DataLoader(train_dataset, batch_size=256,num_workers=40, shuffle=True)
-    #valloader = DataLoader(test_dataset, batch_size=256,num_workers=40, shuffle=False)
+    valloader = DataLoader(test_dataset, batch_size=256,num_workers=40, shuffle=False)
     testloader = DataLoader(test_dataset, batch_size=256,num_workers=40, shuffle=False)
 
     tasks_file_path = os.path.join(base_path, 'class.txt')            
@@ -87,24 +87,24 @@ for run_id in datasets:
             tasks.append(line.strip())
     print(f"当前运行ID: {run_id}, 任务数: {len(tasks)}")
 
-    saved_dir = '/data1/1shared/lijun/ecg/anyECG/code/res/eval_all_30epoch/{}'.format(run_id)
+    saved_dir = '/data1/1shared/lijun/ecg/anyECG/code/res/eval_all_1lead_30epoch/{}'.format(run_id)
     print(saved_dir)
     print(df_label_path)
 
     if not os.path.exists(saved_dir):
         os.makedirs(saved_dir, exist_ok=True)
-    copyfile('/data1/1shared/lijun/ecg/anyECG/code/MIMIC_finetune_template.py', os.path.join(saved_dir, 'MIMIC_finetune_template.py'))
+    copyfile('/data1/1shared/lijun/ecg/anyECG/code/MIMIC_finetune_1lead_template.py', os.path.join(saved_dir, 'MIMIC_finetune_1lead_template.py'))
 
     device = torch.device('cuda:{}'.format(gpu_id) if torch.cuda.is_available() else 'cpu')
 
     n_classes = len(tasks)
 
     if Model == 'ECGFounder':
-        model = ft_ECGFounder(device, n_classes)
+        model = ft_1lead_ECGFounder(device, n_classes)
     elif Model == 'ssl':
-        model = ft_simCLR(device, n_classes)
+        model = ft_1lead_ssl(device, n_classes)
     elif Model == 'random':
-        model = ft_ramdom(device, n_classes)
+        model = ft_1lead_ramdom(device, n_classes)
 
     criterion = nn.BCEWithLogitsLoss()
 
@@ -135,7 +135,7 @@ for run_id in datasets:
 
                 # val
                 model.eval()
-                prog_iter_val = tqdm(testloader, desc="Validation", leave=False)
+                prog_iter_val = tqdm(valloader, desc="Validation", leave=False)
                 all_gt = []
                 all_pred_prob = []
                 with torch.no_grad():
@@ -148,11 +148,11 @@ for run_id in datasets:
                         all_gt.append(input_y.cpu().data.numpy())
                 all_pred_prob = np.concatenate(all_pred_prob)
                 df_pred_prob = pd.DataFrame(all_pred_prob)
-                df_pred_prob.to_csv(f'/data1/1shared/lijun/ecg/anyECG/code/res/eval_all_30epoch/{run_id}/{Model}_gt.csv', index=False)
+                # df_pred_prob.to_csv(f'/data1/1shared/lijun/ecg/anyECG/code/res/eval_all_30epoch/{run_id}/{Model}_pred.csv', index=False)
                 all_gt = np.concatenate(all_gt)
                 all_gt = np.array(all_gt)
                 df_all_gt = pd.DataFrame(all_gt)
-                df_all_gt.to_csv(f'/data1/1shared/lijun/ecg/anyECG/code/res/eval_all_30epoch/{run_id}/{Model}_pred.csv', index=False)
+                # df_all_gt.to_csv(f'/data1/1shared/lijun/ecg/anyECG/code/res/eval_all_30epoch/{run_id}/{Model}_gt.csv', index=False)
 
                 res_val, res_val_auroc, res_test_sens, res_test_spec = my_eval(all_gt, all_pred_prob)
                 val_auroc = res_val
