@@ -1,0 +1,10 @@
+h5py==3.11.0
+matplotlib==3.10.1
+numpy==2.2.4
+pandas==2.2.3
+scikit_learn==1.6.1
+scipy==1.15.2
+torch==2.4.0
+torchvision==0.19.0
+tqdm==4.66.5
+wfdb==4.2.0
