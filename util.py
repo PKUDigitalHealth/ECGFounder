@@ -6,13 +6,11 @@ import numpy as np
 from time import gmtime, strftime
 from matplotlib import pyplot as plt
 from collections import Counter, OrderedDict
-
-
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, f1_score, confusion_matrix, balanced_accuracy_score, roc_curve
 from sklearn.utils import resample
 from sklearn.metrics import average_precision_score
-
+from scipy.signal import medfilt, iirnotch, filtfilt, butter, resample
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,6 +24,35 @@ from sklearn.exceptions import UndefinedMetricWarning
 
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
+
+def filter_bandpass(signal, fs):
+    """
+    Bandpass filter
+    :param signal: 2D numpy array of shape (channels, time)
+    :param fs: sampling frequency
+    :return: filtered signal
+    """
+    # Remove power-line interference
+    b, a = iirnotch(50, 30, fs)
+    filtered_signal = np.zeros_like(signal)
+    for c in range(signal.shape[0]):
+        filtered_signal[c] = filtfilt(b, a, signal[c])
+
+    # Simple bandpass filter
+    b, a = butter(N=4, Wn=[0.67, 40], btype='bandpass', fs=fs)
+    for c in range(signal.shape[0]):
+        filtered_signal[c] = filtfilt(b, a, filtered_signal[c])
+
+    # Remove baseline wander
+    baseline = np.zeros_like(filtered_signal)
+    for c in range(filtered_signal.shape[0]):
+        kernel_size = int(0.4 * fs) + 1
+        if kernel_size % 2 == 0:
+            kernel_size += 1  # Ensure kernel size is odd
+        baseline[c] = medfilt(filtered_signal[c], kernel_size=kernel_size)
+    filter_ecg = filtered_signal - baseline
+
+    return filter_ecg
 
 def my_eval_with_ci_thresh(
     gt, 
@@ -172,8 +199,6 @@ def my_eval_with_ci_thresh(
 
     return mean_metrics_dict, metrics_per_task_dict, ci_per_task_dict
 
-
-
 def bootstrap_ci(
     gt, 
     pred, 
@@ -245,8 +270,6 @@ def bootstrap_ci(
     lower_bound = np.percentile(metrics_list, alpha)
     upper_bound = np.percentile(metrics_list, 100 - alpha)
     return (lower_bound, upper_bound)
-
-
 
 def quantile_accuracy(y_true, y_pred, quantiles):
     """
@@ -591,3 +614,84 @@ def save_reg_checkpoint(state, path):
     filename = 'checkpoint_{0}_{1:.4f}.pth'.format(state['step'], state['mae'])
     filename = os.path.join(path, filename)
     torch.save(state, filename)
+
+
+def find_optimal_threshold(gt, pred):
+    n_task = gt.shape[1]
+    optimal_thresholds = []
+
+    for i in range(n_task):
+        best_ba = -1  
+        best_thresh = 0.5  
+        for thresh in np.linspace(0.01, 0.99, 99):  
+            pred_labels = (pred[:, i] > thresh).astype(int)
+            ba = balanced_accuracy_score(gt[:, i], pred_labels)  
+            if ba > best_ba:
+                best_ba = ba
+                best_thresh = thresh
+        optimal_thresholds.append(best_thresh)
+
+    return optimal_thresholds
+
+def eval_with_dynamic_thresh(gt, pred):
+    """
+    Evaluates the model with dynamically adjusted thresholds for each task.
+
+    Args:
+        gt: Ground truth labels (numpy array)
+        pred: Prediction probabilities (numpy array)
+
+    Returns:
+        - Overall mean of the metrics across all tasks
+        - Per-metric mean across all tasks (as a list)
+        - All metrics per task in a columnar format
+    """
+    optimal_thresholds = find_optimal_threshold(gt, pred)
+    n_task = gt.shape[1]
+    rocaucs = []
+    sensitivities = []
+    specificities = []
+    f1 = []
+    for i in range(n_task):
+        tmp_gt = np.nan_to_num(gt[:, i], nan=0)
+        tmp_pred = np.nan_to_num(pred[:, i], nan=0)
+
+        # ROC-AUC
+        try:
+            rocaucs.append(roc_auc_score(tmp_gt, tmp_pred))
+        except:
+            rocaucs.append(0.0)
+
+        # Sensitivity and Specificity
+        pred_labels = (tmp_pred > optimal_thresholds[i]).astype(int)
+        cm = confusion_matrix(tmp_gt, pred_labels).ravel()
+        
+        # Handle different sizes of confusion matrix
+        if len(cm) == 1:
+            # Only one class present in predictions
+            if pred_labels.sum() == 0:  # Only negative class predicted
+                tn, fp, fn, tp = cm[0], 0, 0, 0
+            else:                       # Only positive class predicted
+                tn, fp, fn, tp = 0, 0, 0, cm[0]
+        else:
+            tn, fp, fn, tp = cm
+
+        # Calculate Sensitivity (True Positive Rate)
+        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+        sensitivities.append(sensitivity)
+        
+        # Calculate Specificity (True Negative Rate)
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+        specificities.append(specificity)
+
+        f1s = f1_score(tmp_gt, pred_labels)
+        f1.append(f1s)
+    # Convert lists to numpy arrays
+    rocaucs = np.array(rocaucs)
+    sensitivities = np.array(sensitivities)
+    specificities = np.array(specificities)
+    f1 = np.array(f1)
+    # Calculate means for each metric
+    mean_rocauc = np.mean(rocaucs)
+
+    return mean_rocauc, rocaucs, sensitivities, specificities, f1, optimal_thresholds
