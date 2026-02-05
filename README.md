@@ -4,7 +4,7 @@ This is the official implementation of our paper "[An Electrocardiogram Foundati
 
 > Authors: Jun Li, Aaron Aguirre, Junior Moura, Jiarui Jin, Che Liu, Lanhai Zhong, Chenxi Sun, Gari Clifford, Brandon Westover, Shenda Hong.
 
-
+Try online demo at http://ai.heartvoice.com.cn/diagnosis.html
 
 ## 🚀 Getting Started
 
